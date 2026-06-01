@@ -42,19 +42,6 @@ CODEX_HEADER = """\
 
 """
 
-# Exact chunks to replace (Claude-only mechanics → Codex-appropriate text).
-PROGRESS_NOTE_OLD = (
-    "**进度追踪**：主管道启动时，用 TaskCreate 为 8 个 Step 创建任务。"
-    "每开始一个 Step 标记 in_progress，完成后标记 completed。用户可随时看到当前进度。"
-)
-PROGRESS_NOTE_NEW = (
-    "**进度追踪**：Codex 无原生 task 工具。每进入一个 Step，用一句话告知用户当前进度"
-    "（如「[3/8] 框架 + 素材」），完成后简述结果。"
-)
-
-TASK_UPDATE_OLD = "每开始一个 Step → TaskUpdate status=in_progress。完成 → TaskUpdate status=completed。"
-TASK_UPDATE_NEW = "每进入一个 Step 用一句话报进度，完成后简述结果。"
-
 
 def split_frontmatter(text: str) -> tuple[str, str]:
     """Drop YAML frontmatter, return the body."""
@@ -73,20 +60,10 @@ def transform_body(body: str) -> str:
     body = re.sub(r'(?<![`/])WebSearch(?=[ "：，）])', "web_search", body)
     body = re.sub(r"(?<=（)WebSearch(?=）)", "web_search", body)
 
-    # Remove the fenced TaskCreate block (the 8-task bootstrap list) + its intro.
-    body = re.sub(
-        r"主管道启动时，创建以下 8 个任务用于进度追踪：\n+```\nTaskCreate:[\s\S]*?```\n+",
-        "",
-        body,
-    )
-
-    # Neutralize the remaining progress-tracking instructions.
-    body = body.replace(PROGRESS_NOTE_OLD, PROGRESS_NOTE_NEW)
-    body = body.replace(TASK_UPDATE_OLD, TASK_UPDATE_NEW)
-
-    # Any stray task-tool tokens left over → neutral wording.
-    body = body.replace("TaskCreate", "（进度说明）").replace("TaskUpdate", "（进度更新）")
-
+    # SKILL.md is harness-agnostic: progress tracking is conditional ("若 harness
+    # 提供 task 工具（如 TaskCreate）…；否则发 [N/8] 文本进度"). The CODEX_HEADER
+    # already tells Codex it has no task tool and to use [N/8], so the conditional
+    # sentence (with its `（如 TaskCreate）` e.g.) carries through verbatim.
     return body
 
 
@@ -94,12 +71,13 @@ def build_prompt() -> str:
     text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
     _, body = split_frontmatter(text)
     transformed = transform_body(body)
-    # Sanity: the body must not still reference Claude-only task tools.
-    # (CODEX_HEADER intentionally mentions them to explain the difference, so
-    # we check the transformed body only — not the final prompt.)
-    leftovers = [t for t in ("TaskCreate", "TaskUpdate") if t in transformed]
+    # Sanity: SKILL.md must be harness-agnostic — no BARE task-tool *call* line
+    # should leak (e.g. a line literally starting with `TaskCreate:`). The word
+    # appearing in prose (such as the conditional's `（如 TaskCreate）` example)
+    # is fine and intentional, so we only flag un-conditionalized call lines.
+    leftovers = re.findall(r"(?m)^(TaskCreate|TaskUpdate):", transformed)
     if leftovers:
-        print(f"  ⚠ 警告：转换后正文仍含 {leftovers}（SKILL.md 结构可能变了，检查 transform_body）")
+        print(f"  ⚠ 警告：转换后正文仍含裸 task 调用行 {leftovers}（SKILL.md 可能未条件化，检查源文件）")
     return CODEX_HEADER + transformed.lstrip("\n")
 
 
