@@ -29,7 +29,7 @@ from claude_agent_sdk import (
 )
 
 from .config import Settings, get_settings
-from .platforms import HUMANNESS_THRESHOLD, SIMILARITY_THRESHOLD
+from .platforms import HUMANNESS_THRESHOLD, MAX_REWRITE_RETRIES, SIMILARITY_THRESHOLD, get_profile
 from .store import Job
 from .workspace import agent_env, build_workspace, cleanup_workspace
 
@@ -149,7 +149,7 @@ async def run_job(job: Job) -> None:
             setting_sources=None,
         )
 
-        last_text = await _consume_stream(
+        await _consume_stream(
             query(prompt=_build_prompt(job, publish=publish), options=options), job)
 
         _collect_outputs(job, ws, theme=theme)
@@ -355,7 +355,11 @@ def _humanness_best_effort(ws: Path, filename: str) -> float | None:
 
 def _collect_platform_versions(job, ws: Path, source_md: str, profiles: list) -> list[dict]:
     out = ws / "output"
-    similarity = _load_similarity()
+    try:
+        similarity = _load_similarity()
+    except Exception:  # noqa: BLE001 - 相似度脚本不可用则降级，不丢已产出的版本
+        def similarity(a, b):  # noqa: ANN001
+            return 0.0
     read: list[tuple] = []
     versions: list[dict] = []
     for prof in profiles:
@@ -384,9 +388,6 @@ def _collect_platform_versions(job, ws: Path, source_md: str, profiles: list) ->
         }
         versions.append(v)
     return versions
-
-
-from .platforms import MAX_REWRITE_RETRIES, get_profile
 
 
 def _distribute_system_prompt(settings: Settings, profiles: list) -> dict:
@@ -472,7 +473,7 @@ async def run_distribute_job(job: Job) -> None:
 
 def _seed_source_images(job: Job, ws: Path) -> None:
     """把内联源（generate job）已持久化的图片拷进改写工作区 output/，供小红书复用。"""
-    for p in getattr(job, "_source_image_paths", []) or []:
+    for p in getattr(job, "source_image_paths", None) or []:
         src = Path(p)
         if src.is_file():
             try:

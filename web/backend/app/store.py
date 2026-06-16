@@ -62,6 +62,7 @@ class Job:
     source_markdown: str = ""
     target_platforms: list[str] = field(default_factory=list)
     platform_versions: list[dict] = field(default_factory=list)
+    source_image_paths: list[str] = field(default_factory=list)  # 内联源的本机图片路径，供小红书复用
     interactive: bool = False
     theme: Optional[str] = None
     persona: Optional[str] = None
